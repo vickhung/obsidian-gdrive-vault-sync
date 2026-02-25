@@ -1,7 +1,8 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "obsidian-gdrive-sync",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Google Drive Sync plugin for Obsidian",
+	"author": "vkAi",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
