@@ -1,5 +1,5 @@
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
-import type ObsidianGDriveSyncPlugin from '../../main';
+import ObsidianGDriveSyncPlugin from '../main';
 
 export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
     plugin: ObsidianGDriveSyncPlugin;

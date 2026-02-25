@@ -59,6 +59,7 @@ export class SyncEngine {
         return this.app.vault.getFiles().filter(file => {
             if (file.path === this.syncStatePath) return false; // Exclude sync state itself
             if (file.path.startsWith('.obsidian/')) return false; // Exclude vault config including this plugin's data.json containing secrets
+            if (file.path.includes('.conflicted.')) return false; // Never sync conflicted files
             return this.matchesRule(file.path) !== undefined;
         });
     }
@@ -151,14 +152,14 @@ export class SyncEngine {
 
                     if (localChanged && remoteChanged) {
                         // Conflict! Both changed since last sync.
-                        await this.handleConflict(rPath, rMeta);
+                        await this.handleConflict(rPath, rMeta, lFile);
                     } else if (remoteChanged) {
                         // Only remote changed
                         await this.downloadFile(rPath, rMeta);
                     }
                 } else {
                     // No state meaning local created and remote created independently. Conflict!
-                    await this.handleConflict(rPath, rMeta);
+                    await this.handleConflict(rPath, rMeta, lFile);
                 }
             }
         }
@@ -253,20 +254,18 @@ export class SyncEngine {
         };
     }
 
-    private async handleConflict(path: string, remoteMeta: FileMeta) {
-        console.log(`Conflict detected for ${path}`);
-        this.addConflictNotice(`Conflict detected: ${path}`);
+    private async handleConflict(path: string, remoteMeta: FileMeta, localFile: TFile) {
+        console.log(`Conflict detected for ${path}, resolving by picking the newest file.`);
 
-        const data = await this.storage.get(path);
-        const timestamp = new Date().getTime();
-        const conflictPath = path.replace(/\\.[^/.]+$/, '') + `.conflicted.${timestamp}` + path.substring(path.lastIndexOf('.'));
-
-        await this.app.vault.createBinary(conflictPath, data);
-
-        // We do not update the state for the main file, because we haven't resolved it. 
-        // Next sync might still see conflict if the user doesn't resolve it.
-        // Or we assume the newly created conflicted file is a download, and the main file is local change.
-        // Actually, let's keep local as is, save remote as conflicted. We upload local next time if it changes, or if we just update state?
-        // Let's just update the state to match the *current* remote so local can be uploaded normally next time if modified, or just keep it as conflict.
+        // Pick the most recently modified file to win
+        if (localFile.stat.mtime >= remoteMeta.modifiedTime) {
+            console.log(`Local file is newer or same time as remote, uploading ${path}`);
+            await this.uploadFile(path, localFile);
+            this.addConflictNotice(`Resolved conflict for ${path} (Kept Local Version)`);
+        } else {
+            console.log(`Remote file is newer, downloading ${path}`);
+            await this.downloadFile(path, remoteMeta);
+            this.addConflictNotice(`Resolved conflict for ${path} (Kept Remote Version)`);
+        }
     }
 }
