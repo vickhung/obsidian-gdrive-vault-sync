@@ -56,10 +56,16 @@ export class SyncEngine {
     }
 
     private async getLocalFiles(): Promise<TFile[]> {
-        return this.app.vault.getFiles().filter(file => {
+        return this.app.vault.getAllLoadedFiles().filter((file): file is TFile => {
+            if (!(file instanceof TFile)) return false; // Only sync files, not raw folders
             if (file.path === this.syncStatePath) return false; // Exclude sync state itself
             if (file.path.startsWith('.obsidian/')) return false; // Exclude vault config including this plugin's data.json containing secrets
             if (file.path.includes('.conflicted.')) return false; // Never sync conflicted files
+
+            // Exclude anything in this.settings.ignoredPaths
+            if (this.settings.ignoredPaths.includes(file.path)) return false;
+            if (this.settings.ignoredPaths.some(p => file.path.startsWith(p + '/'))) return false;
+
             return this.matchesRule(file.path) !== undefined;
         });
     }

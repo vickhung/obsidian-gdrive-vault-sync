@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
+import { App, PluginSettingTab, Setting, Notice, TFolder, TAbstractFile, TFile } from 'obsidian';
 import ObsidianGDriveSyncPlugin from '../main';
 
 export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
@@ -211,5 +211,94 @@ export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
                     });
                     await this.plugin.saveSettings();
                 }));
+
+        containerEl.createEl('h3', { text: 'Selective Sync' });
+        containerEl.createEl('p', { text: 'Uncheck items to exclude them from syncing. New files and folders are synced by default.' });
+
+        const treeContainer = containerEl.createDiv('sync-tree-container');
+        treeContainer.style.border = '1px solid var(--background-modifier-border)';
+        treeContainer.style.borderRadius = '4px';
+        treeContainer.style.padding = '10px';
+        treeContainer.style.maxHeight = '400px';
+        treeContainer.style.overflowY = 'auto';
+        treeContainer.style.backgroundColor = 'var(--background-secondary)';
+
+        this.renderTree(this.app.vault.getRoot(), treeContainer, 0);
+    }
+
+    private renderTree(folder: TFolder, container: HTMLElement, depth: number) {
+        // Sort: folders first, then files
+        const children = folder.children.slice().sort((a, b) => {
+            if (a instanceof TFolder && b instanceof TFile) return -1;
+            if (a instanceof TFile && b instanceof TFolder) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        for (const child of children) {
+            // Skip hidden obsidian folder
+            if (child.path.startsWith('.obsidian') || child.path === '.obsidian-gdrive-sync.json') continue;
+
+            const itemDiv = container.createDiv('sync-tree-item');
+            itemDiv.style.marginLeft = `${depth * 20}px`;
+            itemDiv.style.display = 'flex';
+            itemDiv.style.alignItems = 'center';
+            itemDiv.style.marginBottom = '4px';
+
+            const checkbox = itemDiv.createEl('input', { type: 'checkbox' });
+
+            // It is checked if it is NOT in the ignored list
+            const isIgnored = this.plugin.settings.ignoredPaths.includes(child.path);
+            checkbox.checked = !isIgnored;
+
+            // If a parent is ignored, we might want to visually disable this checkbox or auto-uncheck it
+            const isParentIgnored = this.plugin.settings.ignoredPaths.some(p => child.path.startsWith(p + '/'));
+            if (isParentIgnored) {
+                checkbox.checked = false;
+                checkbox.disabled = true;
+            }
+
+            checkbox.addEventListener('change', async (e) => {
+                const checked = (e.target as HTMLInputElement).checked;
+
+                if (checked) {
+                    // Remove from ignoredPaths
+                    this.plugin.settings.ignoredPaths = this.plugin.settings.ignoredPaths.filter(p => p !== child.path);
+
+                    // Also remove any children that were explicitly ignored
+                    if (child instanceof TFolder) {
+                        this.plugin.settings.ignoredPaths = this.plugin.settings.ignoredPaths.filter(p => !p.startsWith(child.path + '/'));
+                    }
+                } else {
+                    // Add to ignoredPaths
+                    if (!this.plugin.settings.ignoredPaths.includes(child.path)) {
+                        this.plugin.settings.ignoredPaths.push(child.path);
+                    }
+                }
+
+                await this.plugin.saveSettings();
+
+                // Re-render tree to update disabled states for children
+                const treeContainer = container.closest('.sync-tree-container');
+                if (treeContainer) {
+                    treeContainer.empty();
+                    this.renderTree(this.app.vault.getRoot(), treeContainer as HTMLElement, 0);
+                }
+            });
+
+            const icon = itemDiv.createSpan();
+            icon.textContent = child instanceof TFolder ? '📁 ' : '📄 ';
+            icon.style.marginRight = '5px';
+            icon.style.opacity = isParentIgnored ? '0.5' : '1';
+
+            const label = itemDiv.createSpan({ text: child.name });
+            label.style.opacity = (isIgnored || isParentIgnored) ? '0.5' : '1';
+            if (isIgnored || isParentIgnored) {
+                label.style.textDecoration = 'line-through';
+            }
+
+            if (child instanceof TFolder) {
+                this.renderTree(child, container, depth + 1);
+            }
+        }
     }
 }
