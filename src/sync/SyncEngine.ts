@@ -97,29 +97,52 @@ export class SyncEngine {
         await this.loadState();
 
         const localFiles = await this.getLocalFiles();
-        const remoteFiles = await this.storage.list(''); // List all files? We need to list recursively.
-        // Wait, `storage.list` gets flat or nested? Our GoogleDriveStorage `list(path)` lists only one folder level.
-        // We need a recursive list or we crawl the remote. 
-        // To avoid excessive API calls, let's just do a remote list recursively from root using Drive API directly or a recursive `storage.list`.
-
-        // Let's redefine `crawlRemote` to keep track of paths
-        const allRemoteFiles: FileMeta[] = [];
-        await this.crawlRemoteWithPath('', '', allRemoteFiles);
-
-        const remotePathMap = new Map<string, FileMeta>();
-        for (const rf of allRemoteFiles) {
-            remotePathMap.set(rf.id!, rf); // Just storing them, `id` is a hack here. `rf.name` will be full path in crawlRemoteWithPath.
-        }
+        const remotePathMap = await this.fetchRemoteState();
 
         const lFilesMap = new Map<string, TFile>();
         for (const lf of localFiles) {
             lFilesMap.set(lf.path, lf);
         }
 
-        // --- 1. Download Remote Changes ---
         const downloaded = new Set<string>();
+
+        if (this.settings.pullEnabled) {
+            await this.pull(remotePathMap, lFilesMap, downloaded);
+        } else {
+            console.log('Pull is disabled, skipping...');
+        }
+
+        if (this.settings.pushEnabled) {
+            await this.push(remotePathMap, lFilesMap, downloaded);
+        } else {
+            console.log('Push is disabled, skipping...');
+        }
+
+        this.settings.lastSyncTime = Date.now();
+        await this.saveState();
+        console.log('Sync complete!');
+    }
+
+    private async fetchRemoteState(): Promise<Map<string, FileMeta>> {
+        const allRemoteFiles: FileMeta[] = [];
+        await this.crawlRemoteWithPath('', '', allRemoteFiles);
+
+        const remotePathMap = new Map<string, FileMeta>();
+        for (const rf of allRemoteFiles) {
+            remotePathMap.set(rf.id!, rf); // rf.id was hacked to be the full path in crawlRemoteWithPath
+        }
+        return remotePathMap;
+    }
+
+    private async pull(remotePathMap: Map<string, FileMeta>, lFilesMap: Map<string, TFile>, downloaded: Set<string>) {
+        console.log('Starting pull...');
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
+
+            // CRITICAL: Respect selective sync (ignoredPaths)
+            if (this.settings.ignoredPaths.includes(rPath) || this.settings.ignoredPaths.some(p => rPath.startsWith(p + '/'))) {
+                continue;
+            }
 
             const rule = this.matchesRule(rPath);
             if (!rule) continue;
@@ -146,8 +169,6 @@ export class SyncEngine {
                 }
             } else {
                 // File exists both remotely and locally. Compare.
-                const localStat = await this.app.vault.adapter.stat(rPath);
-
                 if (stateEntry) {
                     const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
                     const remoteChanged = rMeta.modifiedTime > stateEntry.modifiedTime;
@@ -166,8 +187,10 @@ export class SyncEngine {
                 }
             }
         }
+    }
 
-        // --- 2. Upload Local Changes ---
+    private async push(remotePathMap: Map<string, FileMeta>, lFilesMap: Map<string, TFile>, downloaded: Set<string>) {
+        console.log('Starting push...');
         for (const [lPath, lFile] of lFilesMap.entries()) {
             if (downloaded.has(lPath)) continue;
 
@@ -186,10 +209,6 @@ export class SyncEngine {
                 }
             }
         }
-
-        this.settings.lastSyncTime = Date.now();
-        await this.saveState();
-        console.log('Sync complete!');
     }
 
     private async crawlRemoteWithPath(currentPath: string, basePath: string, output: FileMeta[]) {

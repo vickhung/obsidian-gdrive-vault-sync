@@ -187,6 +187,26 @@ export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
                     }));
         }
 
+        new Setting(containerEl)
+            .setName('Push to Google Drive')
+            .setDesc('Upload local changes to Google Drive.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.pushEnabled)
+                .onChange(async (value) => {
+                    this.plugin.settings.pushEnabled = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Pull from Google Drive')
+            .setDesc('Download remote changes from Google Drive.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.pullEnabled)
+                .onChange(async (value) => {
+                    this.plugin.settings.pullEnabled = value;
+                    await this.plugin.saveSettings();
+                }));
+
         containerEl.createEl('h3', { text: 'Sync Rules (for Agents & Partial Sync)' });
         containerEl.createEl('p', { text: 'Format: localPattern|driveFolderId|direction (e.g. Agents/AgentA/**|xyz123|download-only)' });
 

@@ -22,6 +22,8 @@ export interface ObsidianGDriveSyncSettings {
     serviceAccountJson: string;
     lastSyncTime: number;
     ignoredPaths: string[];
+    pushEnabled: boolean;
+    pullEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: ObsidianGDriveSyncSettings = {
@@ -37,7 +39,9 @@ export const DEFAULT_SETTINGS: ObsidianGDriveSyncSettings = {
     accessTokenExpiry: 0,
     serviceAccountJson: '',
     lastSyncTime: 0,
-    ignoredPaths: []
+    ignoredPaths: [],
+    pushEnabled: true,
+    pullEnabled: true
 };
 
 export interface FileMeta {

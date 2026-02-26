@@ -1,6 +1,6 @@
-# Google Drive Sync v1.0.0 - Official Release
+# Google Drive Sync v1.1.0 - Official Release
 
-Welcome to the official v1.0.0 release of the Google Drive Sync plugin for Obsidian! This plugin provides robust, cross-platform synchronization of your Obsidian vault directly to your Google Drive, featuring selective syncing, conflict resolution, and support for automated interval syncing.
+Welcome to the v1.1.0 release of the Google Drive Sync plugin for Obsidian! This update introduces granular control over data flow with independent push and pull settings, and ensures that selective sync settings are strictly respected on each device.
 
 ## How to Install the Plugin
 
@@ -43,8 +43,10 @@ To allow the plugin to read and write your files, you must connect it to Google 
 8. The plugin will securely extract your token and begin syncing!
 
 ## Features in this Release
+- **Independent Push/Pull Control [NEW]**: Toggle uploading and downloading separately for each device in the settings.
+- **Improved Selective Sync [NEW]**: Unchecked files/folders are now explicitly ignored during the pull phase, preventing unwanted downloads.
 - **Two-Way Sync**: Native sync of local files and Google Drive modifications.
-- **Selective Sync**: Choose exactly which folders or files to ignore via a visual tree in the settings. New files default to synced.
-- **Conflict Resolution**: "Newest-file-wins" architecture prevents `.conflicted.` loops.
-- **Dynamic Status Bar**: Always tells you when the last sync finished.
-- **Supports All Files**: Correctly copies and tracks unknown file extensions (like `.base`) in addition to markdown.
+- **Selective Sync**: Choose exactly which folders or files to ignore via a visual tree.
+- **Conflict Resolution**: "Pick-Newest" architecture prevents sync loops.
+- **Dynamic Status Bar**: Displays the last successful sync time.
+- **Supports All Files**: Syncs non-markdown extensions (e.g., `.base`, `.pdf`).
