@@ -78,7 +78,7 @@ export class GoogleAuth {
             throw new Error('Missing required fields in Service Account JSON');
         }
 
-        const scope = 'https://www.googleapis.com/auth/drive.file';
+        const scope = 'https://www.googleapis.com/auth/drive';
 
         // 1. Create JWT
         const privateKeyObj = await importPKCS8(private_key, 'RS256');

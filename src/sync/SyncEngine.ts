@@ -102,19 +102,8 @@ export class SyncEngine {
         // We need a recursive list or we crawl the remote. 
         // To avoid excessive API calls, let's just do a remote list recursively from root using Drive API directly or a recursive `storage.list`.
 
-        // Since `storage.list` isn't recursive, we will implement `crawlRemote` here or inside storage.
-        const allRemoteFiles: FileMeta[] = [];
-        await this.crawlRemote('', allRemoteFiles);
-
-        const remoteFileMap = new Map<string, FileMeta>();
-        for (const rf of allRemoteFiles) {
-            remoteFileMap.set(rf.name /* this is just basename, we need full path */, rf);
-        }
-
-        // Wait, GoogleDriveStorage `list(path)` returns `FileMeta` but the `name` is just the basename.
-        // We need the full path to compare with local `file.path`.
-
         // Let's redefine `crawlRemote` to keep track of paths
+        const allRemoteFiles: FileMeta[] = [];
         await this.crawlRemoteWithPath('', '', allRemoteFiles);
 
         const remotePathMap = new Map<string, FileMeta>();
@@ -128,6 +117,7 @@ export class SyncEngine {
         }
 
         // --- 1. Download Remote Changes ---
+        const downloaded = new Set<string>();
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
 
@@ -142,11 +132,17 @@ export class SyncEngine {
                 if (!stateEntry) {
                     // It's a brand new remote file
                     await this.downloadFile(rPath, rMeta);
+                    downloaded.add(rPath);
                 } else {
                     // It was synced before. Did the user delete it locally?
-                    // If we support deletions, we could delete it remotely.
-                    // For MVP, we'll download it back.
-                    await this.downloadFile(rPath, rMeta);
+                    if (rule.direction === 'download-only') {
+                        await this.downloadFile(rPath, rMeta);
+                        downloaded.add(rPath);
+                    } else {
+                        // Delete remotely to sync the local deletion
+                        await this.storage.delete(rPath);
+                        delete this.state.files[rPath];
+                    }
                 }
             } else {
                 // File exists both remotely and locally. Compare.
@@ -162,6 +158,7 @@ export class SyncEngine {
                     } else if (remoteChanged) {
                         // Only remote changed
                         await this.downloadFile(rPath, rMeta);
+                        downloaded.add(rPath);
                     }
                 } else {
                     // No state meaning local created and remote created independently. Conflict!
@@ -172,6 +169,8 @@ export class SyncEngine {
 
         // --- 2. Upload Local Changes ---
         for (const [lPath, lFile] of lFilesMap.entries()) {
+            if (downloaded.has(lPath)) continue;
+
             const rule = this.matchesRule(lPath);
             if (!rule || rule.direction === 'download-only') continue;
 
@@ -179,14 +178,10 @@ export class SyncEngine {
             const stateEntry = this.state.files[lPath];
             const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
 
-            if (!rMeta) {
-                // File exists locally but not remotely
-                if (!stateEntry || localChanged) {
-                    await this.uploadFile(lPath, lFile);
-                }
-            } else {
-                // Exists both. (Handled above, except for the pure local change case)
-                if (localChanged && stateEntry && rMeta.modifiedTime <= stateEntry.modifiedTime) {
+            const shouldUpload = !stateEntry ? !rMeta : localChanged;
+
+            if (shouldUpload) {
+                if (!rMeta || (!stateEntry) || (stateEntry && rMeta.modifiedTime <= stateEntry.modifiedTime)) {
                     await this.uploadFile(lPath, lFile);
                 }
             }
@@ -212,9 +207,7 @@ export class SyncEngine {
         }
     }
 
-    private async crawlRemote(path: string, output: FileMeta[]) {
-        // Obsolete, using crawlRemoteWithPath
-    }
+
 
     private async downloadFile(path: string, remoteMeta: FileMeta) {
         console.log(`Downloading ${path}...`);

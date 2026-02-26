@@ -44,7 +44,7 @@ export class GoogleDriveStorage implements Storage {
 
             // Look it up
             const q = `'${currentParentId}' in parents and name='${part}' and trashed=false`;
-            const url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=files(id,mimeType)`;
+            const url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=files(id,mimeType)&includeItemsFromAllDrives=true&supportsAllDrives=true`;
             const response = await this.fetchWithAuth(url);
 
             if (!response.ok) {
@@ -89,7 +89,7 @@ export class GoogleDriveStorage implements Storage {
         if (!folderId) return []; // Folder does not exist
 
         const q = `'${folderId}' in parents and trashed=false`;
-        let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)`;
+        let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)&includeItemsFromAllDrives=true&supportsAllDrives=true`;
 
         let allFiles: FileMeta[] = [];
         let hasNextPage = true;
@@ -114,7 +114,7 @@ export class GoogleDriveStorage implements Storage {
             }
 
             if (data.nextPageToken) {
-                url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)&pageToken=${data.nextPageToken}`;
+                url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)&includeItemsFromAllDrives=true&supportsAllDrives=true&pageToken=${data.nextPageToken}`;
             } else {
                 hasNextPage = false;
             }
@@ -147,7 +147,19 @@ export class GoogleDriveStorage implements Storage {
         if (!parentId) throw new Error(`Failed to resolve parent directory for upload: ${parentPath}`);
 
         // Check if file already exists
-        const fileId = await this.resolvePathToId(path);
+        let fileId = await this.resolvePathToId(path);
+
+        if (!fileId && parentId) {
+            let query = `'${parentId}' in parents and name='${fileName}' and trashed=false and mimeType!='application/vnd.google-apps.folder'`;
+            let searchUrl = `${this.driveApiBase}?q=${encodeURIComponent(query)}&fields=files(id)&includeItemsFromAllDrives=true&supportsAllDrives=true`;
+            let searchResp = await this.fetchWithAuth(searchUrl);
+            if (searchResp.ok) {
+                let searchData = await searchResp.json();
+                if (searchData.files && searchData.files.length > 0) {
+                    fileId = searchData.files[0].id;
+                }
+            }
+        }
 
         // Multi-part upload strategy is best for Drive REST API but a bit tedious without a library
         // For simplicity, we use the simple upload for the body, and patch metadata after.
