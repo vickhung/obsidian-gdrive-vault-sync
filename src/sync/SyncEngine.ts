@@ -1,6 +1,7 @@
 import { App, TFile, TFolder, FileSystemAdapter } from 'obsidian';
 import { minimatch } from 'minimatch';
 import { Storage, SyncRule, ObsidianGDriveSyncSettings, FileMeta } from '../types';
+import { VersioningEngine } from './VersioningEngine';
 
 interface SyncState {
     files: {
@@ -14,13 +15,16 @@ interface SyncState {
 export class SyncEngine {
     private syncStatePath = '.obsidian-gdrive-sync.json';
     private state: SyncState = { files: {} };
+    private versioning: VersioningEngine;
 
     constructor(
         private app: App,
         private storage: Storage,
         private settings: ObsidianGDriveSyncSettings,
         private addConflictNotice: (msg: string) => void
-    ) { }
+    ) {
+        this.versioning = new VersioningEngine(app);
+    }
 
     private async loadState() {
         try {
@@ -113,14 +117,17 @@ export class SyncEngine {
     public async sync() {
         console.log('Starting full sync...');
         await this.loadState();
+        await this.versioning.loadCache();
         await this.pull();
         await this.push();
+        await this.versioning.saveCache();
         console.log('Full sync complete!');
     }
 
     public async pull(targetPath?: string) {
         console.log(`Starting pull ${targetPath ? 'for ' + targetPath : ''}...`);
         await this.loadState();
+        await this.versioning.loadCache();
         
         const allRemoteFiles: FileMeta[] = [];
         await this.crawlRemoteWithPath('', '', allRemoteFiles);
@@ -143,12 +150,16 @@ export class SyncEngine {
             if (!lFile) {
                 await this.downloadFile(rPath, rMeta);
             } else if (lFile instanceof TFile) {
-                const remoteChanged = rMeta.modifiedTime > (stateEntry?.modifiedTime || 0);
-                if (remoteChanged) {
+                const localHash = await this.versioning.getHash(lFile);
+                const remoteHash = rMeta.md5Checksum;
+                
+                if (localHash !== remoteHash) {
+                    const remoteChanged = rMeta.modifiedTime > (stateEntry?.modifiedTime || 0);
                     const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
-                    if (localChanged) {
+
+                    if (remoteChanged && localChanged) {
                         await this.handleConflict(rPath, rMeta, lFile);
-                    } else {
+                    } else if (remoteChanged) {
                         await this.downloadFile(rPath, rMeta);
                     }
                 }
@@ -157,11 +168,13 @@ export class SyncEngine {
         
         this.settings.lastSyncTime = Date.now();
         await this.saveState();
+        await this.versioning.saveCache();
     }
 
     public async push(targetPath?: string) {
         console.log(`Starting push ${targetPath ? 'for ' + targetPath : ''}...`);
         await this.loadState();
+        await this.versioning.loadCache();
         
         const localFiles = await this.getLocalFiles();
         
@@ -173,17 +186,16 @@ export class SyncEngine {
             if (!rule || rule.direction === 'download-only') continue;
 
             const stateEntry = this.state.files[lPath];
-            const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
+            const localHash = await this.versioning.getHash(lFile);
 
-            // We'll check remote state briefly or just push if local changed
-            // To be safe and efficient, we pushed if it's never been synced or changed since last sync
-            if (!stateEntry || localChanged) {
+            if (!stateEntry || stateEntry.md5Checksum !== localHash) {
                 await this.uploadFile(lPath, lFile);
             }
         }
 
         this.settings.lastSyncTime = Date.now();
         await this.saveState();
+        await this.versioning.saveCache();
     }
 
     public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
@@ -238,10 +250,16 @@ export class SyncEngine {
             await this.app.vault.createBinary(path, data);
         }
 
+        const tfile = this.app.vault.getAbstractFileByPath(path) as TFile;
         this.state.files[path] = {
             md5Checksum: remoteMeta.md5Checksum || '',
             modifiedTime: remoteMeta.modifiedTime
         };
+
+        // Important: Update hash cache so we don't re-upload what we just downloaded
+        if (tfile) {
+            this.versioning.updateEntry(path, remoteMeta.md5Checksum || '', tfile.stat.mtime, tfile.stat.size);
+        }
     }
 
     private async uploadFile(path: string, localFile: TFile) {
@@ -256,6 +274,9 @@ export class SyncEngine {
             md5Checksum: rMeta.md5Checksum || '',
             modifiedTime: rMeta.modifiedTime
         };
+
+        // Update local hash cache
+        this.versioning.updateEntry(path, rMeta.md5Checksum || '', localFile.stat.mtime, localFile.stat.size);
     }
 
     private async handleConflict(path: string, remoteMeta: FileMeta, localFile: TFile) {
