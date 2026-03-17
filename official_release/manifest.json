@@ -1,10 +1,11 @@
 {
 	"id": "obsidian-gdrive-sync",
 	"name": "Google Drive Sync",
-	"version": "1.1.0",
+	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
 	"description": "Cross-platform Google Drive vault synchronization with agent access control.",
 	"author": "vkAi",
-	"author_url": "https://obsidian.md",
+	"authorUrl": "https://obsidian.md",
+	"fundingUrl": "https://obsidian.md/pricing",
 	"isDesktopOnly": false
 }
