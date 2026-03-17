@@ -56,18 +56,36 @@ export class SyncEngine {
     }
 
     private async getLocalFiles(): Promise<TFile[]> {
-        return this.app.vault.getAllLoadedFiles().filter((file): file is TFile => {
-            if (!(file instanceof TFile)) return false; // Only sync files, not raw folders
-            if (file.path === this.syncStatePath) return false; // Exclude sync state itself
-            if (file.path.startsWith('.obsidian/')) return false; // Exclude vault config including this plugin's data.json containing secrets
-            if (file.path.includes('.conflicted.')) return false; // Never sync conflicted files
+        const files: TFile[] = [];
+        const ignoredSet = new Set(this.settings.ignoredPaths);
 
-            // Exclude anything in this.settings.ignoredPaths
-            if (this.settings.ignoredPaths.includes(file.path)) return false;
-            if (this.settings.ignoredPaths.some(p => file.path.startsWith(p + '/'))) return false;
+        const traverse = (fileOrFolder: TFile | TFolder) => {
+            if (fileOrFolder.path === '.obsidian' || fileOrFolder.path.startsWith('.obsidian/')) return;
+            if (ignoredSet.has(fileOrFolder.path)) return;
 
-            return this.matchesRule(file.path) !== undefined;
-        });
+            if (fileOrFolder instanceof TFolder) {
+                for (const child of fileOrFolder.children) {
+                    if (child instanceof TFile || child instanceof TFolder) {
+                        traverse(child);
+                    }
+                }
+            } else if (fileOrFolder instanceof TFile) {
+                if (fileOrFolder.path === this.syncStatePath) return;
+                if (fileOrFolder.path.includes('.conflicted.')) return;
+                
+                if (this.matchesRule(fileOrFolder.path)) {
+                    files.push(fileOrFolder);
+                }
+            }
+        };
+
+        for (const child of this.app.vault.getRoot().children) {
+            if (child instanceof TFile || child instanceof TFolder) {
+                traverse(child);
+            }
+        }
+        
+        return files;
     }
     private async getRemoteFileContent(rule: SyncRule, localPath: string): Promise<ArrayBuffer | null> {
         // Strip out the pattern base if needed or just use relative paths.
@@ -93,108 +111,90 @@ export class SyncEngine {
     }
 
     public async sync() {
-        console.log('Starting sync...');
+        console.log('Starting full sync...');
         await this.loadState();
+        await this.pull();
+        await this.push();
+        console.log('Full sync complete!');
+    }
 
-        const localFiles = await this.getLocalFiles();
-        const remoteFiles = await this.storage.list(''); // List all files? We need to list recursively.
-        // Wait, `storage.list` gets flat or nested? Our GoogleDriveStorage `list(path)` lists only one folder level.
-        // We need a recursive list or we crawl the remote. 
-        // To avoid excessive API calls, let's just do a remote list recursively from root using Drive API directly or a recursive `storage.list`.
-
-        // Since `storage.list` isn't recursive, we will implement `crawlRemote` here or inside storage.
+    public async pull(targetPath?: string) {
+        console.log(`Starting pull ${targetPath ? 'for ' + targetPath : ''}...`);
+        await this.loadState();
+        
         const allRemoteFiles: FileMeta[] = [];
-        await this.crawlRemote('', allRemoteFiles);
-
-        const remoteFileMap = new Map<string, FileMeta>();
-        for (const rf of allRemoteFiles) {
-            remoteFileMap.set(rf.name /* this is just basename, we need full path */, rf);
-        }
-
-        // Wait, GoogleDriveStorage `list(path)` returns `FileMeta` but the `name` is just the basename.
-        // We need the full path to compare with local `file.path`.
-
-        // Let's redefine `crawlRemote` to keep track of paths
         await this.crawlRemoteWithPath('', '', allRemoteFiles);
-
+        
         const remotePathMap = new Map<string, FileMeta>();
         for (const rf of allRemoteFiles) {
-            remotePathMap.set(rf.id!, rf); // Just storing them, `id` is a hack here. `rf.name` will be full path in crawlRemoteWithPath.
+            remotePathMap.set(rf.id!, rf);
         }
 
-        const lFilesMap = new Map<string, TFile>();
-        for (const lf of localFiles) {
-            lFilesMap.set(lf.path, lf);
-        }
-
-        // --- 1. Download Remote Changes ---
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
+            if (targetPath && rPath !== targetPath && !rPath.startsWith(targetPath + '/')) continue;
 
             const rule = this.matchesRule(rPath);
             if (!rule) continue;
 
-            const lFile = lFilesMap.get(rPath);
+            const lFile = this.app.vault.getAbstractFileByPath(rPath);
             const stateEntry = this.state.files[rPath];
 
             if (!lFile) {
-                // File exists remotely but not locally
-                if (!stateEntry) {
-                    // It's a brand new remote file
-                    await this.downloadFile(rPath, rMeta);
-                } else {
-                    // It was synced before. Did the user delete it locally?
-                    // If we support deletions, we could delete it remotely.
-                    // For MVP, we'll download it back.
-                    await this.downloadFile(rPath, rMeta);
-                }
-            } else {
-                // File exists both remotely and locally. Compare.
-                const localStat = await this.app.vault.adapter.stat(rPath);
-
-                if (stateEntry) {
+                await this.downloadFile(rPath, rMeta);
+            } else if (lFile instanceof TFile) {
+                const remoteChanged = rMeta.modifiedTime > (stateEntry?.modifiedTime || 0);
+                if (remoteChanged) {
                     const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
-                    const remoteChanged = rMeta.modifiedTime > stateEntry.modifiedTime;
-
-                    if (localChanged && remoteChanged) {
-                        // Conflict! Both changed since last sync.
+                    if (localChanged) {
                         await this.handleConflict(rPath, rMeta, lFile);
-                    } else if (remoteChanged) {
-                        // Only remote changed
+                    } else {
                         await this.downloadFile(rPath, rMeta);
                     }
-                } else {
-                    // No state meaning local created and remote created independently. Conflict!
-                    await this.handleConflict(rPath, rMeta, lFile);
                 }
             }
         }
+        
+        this.settings.lastSyncTime = Date.now();
+        await this.saveState();
+    }
 
-        // --- 2. Upload Local Changes ---
-        for (const [lPath, lFile] of lFilesMap.entries()) {
+    public async push(targetPath?: string) {
+        console.log(`Starting push ${targetPath ? 'for ' + targetPath : ''}...`);
+        await this.loadState();
+        
+        const localFiles = await this.getLocalFiles();
+        
+        for (const lFile of localFiles) {
+            const lPath = lFile.path;
+            if (targetPath && lPath !== targetPath && !lPath.startsWith(targetPath + '/')) continue;
+
             const rule = this.matchesRule(lPath);
             if (!rule || rule.direction === 'download-only') continue;
 
-            const rMeta = remotePathMap.get(lPath);
             const stateEntry = this.state.files[lPath];
             const localChanged = lFile.stat.mtime > this.settings.lastSyncTime;
 
-            if (!rMeta) {
-                // File exists locally but not remotely
-                if (!stateEntry || localChanged) {
-                    await this.uploadFile(lPath, lFile);
-                }
-            } else {
-                // Exists both. (Handled above, except for the pure local change case)
-                if (localChanged && stateEntry && rMeta.modifiedTime <= stateEntry.modifiedTime) {
-                    await this.uploadFile(lPath, lFile);
-                }
+            // We'll check remote state briefly or just push if local changed
+            // To be safe and efficient, we pushed if it's never been synced or changed since last sync
+            if (!stateEntry || localChanged) {
+                await this.uploadFile(lPath, lFile);
             }
         }
 
         this.settings.lastSyncTime = Date.now();
         await this.saveState();
-        console.log('Sync complete!');
+    }
+
+    public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
+        const allRemoteFiles: FileMeta[] = [];
+        await this.crawlRemoteWithPath('', '', allRemoteFiles);
+
+        const remotePathMap = new Map<string, FileMeta>();
+        for (const rf of allRemoteFiles) {
+            remotePathMap.set(rf.id!, rf);
+        }
+        return remotePathMap;
     }
 
     private async crawlRemoteWithPath(currentPath: string, basePath: string, output: FileMeta[]) {
@@ -212,9 +212,7 @@ export class SyncEngine {
         }
     }
 
-    private async crawlRemote(path: string, output: FileMeta[]) {
-        // Obsolete, using crawlRemoteWithPath
-    }
+
 
     private async downloadFile(path: string, remoteMeta: FileMeta) {
         console.log(`Downloading ${path}...`);

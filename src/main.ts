@@ -20,15 +20,35 @@ export default class ObsidianGDriveSyncPlugin extends Plugin {
 		this.statusBarItemEl = this.addStatusBarItem();
 		this.updateStatusBar();
 
-		// This creates an icon in the left ribbon for manual sync
-		this.addRibbonIcon('refresh-cw', 'Sync Google Drive', async () => {
-			await this.runSync();
+		// Ribbon Icons for manual operations
+		this.addRibbonIcon('upload-cloud', 'Push to Google Drive', async () => {
+			await this.runPush();
 		});
 
-		// Command for Command Palette
+		this.addRibbonIcon('download-cloud', 'Pull from Google Drive', async () => {
+			await this.runPull();
+		});
+
+		// Commands for Command Palette
+		this.addCommand({
+			id: 'push-google-drive',
+			name: 'Push Now',
+			callback: async () => {
+				await this.runPush();
+			}
+		});
+
+		this.addCommand({
+			id: 'pull-google-drive',
+			name: 'Pull Now',
+			callback: async () => {
+				await this.runPull();
+			}
+		});
+
 		this.addCommand({
 			id: 'sync-google-drive',
-			name: 'Sync Now',
+			name: 'Sync Now (Full)',
 			callback: async () => {
 				await this.runSync();
 			}
@@ -92,20 +112,48 @@ export default class ObsidianGDriveSyncPlugin extends Plugin {
 
 	public async runSync() {
 		if (!this.initSyncEngine()) return;
-
-		const notice = new Notice('Syncing with Google Drive...', 0);
+		const notice = new Notice('Starting full sync...', 0);
 		this.statusBarItemEl.setText('Syncing...');
-
 		try {
 			await this.syncEngine!.sync();
 			notice.hide();
-			new Notice('Google Drive Sync Complete!');
+			new Notice('Full Sync Complete!');
 			this.updateStatusBar();
 		} catch (error) {
 			console.error(error);
 			notice.hide();
-			new Notice('Google Drive Sync Failed. See console for details.');
+			new Notice('Sync Failed.');
 			this.statusBarItemEl.setText('Sync Failed');
+		}
+	}
+
+	public async runPush(targetPath?: string) {
+		if (!this.initSyncEngine()) return;
+		const notice = new Notice(targetPath ? `Pushing ${targetPath}...` : 'Pushing to Google Drive...', 0);
+		try {
+			await this.syncEngine!.push(targetPath);
+			notice.hide();
+			new Notice(targetPath ? `Pushed ${targetPath}` : 'Push Complete!');
+			this.updateStatusBar();
+		} catch (error) {
+			console.error(error);
+			notice.hide();
+			new Notice('Push Failed.');
+		}
+	}
+
+	public async runPull(targetPath?: string) {
+		if (!this.initSyncEngine()) return;
+		const notice = new Notice(targetPath ? `Pulling ${targetPath}...` : 'Pulling from Google Drive...', 0);
+		try {
+			await this.syncEngine!.pull(targetPath);
+			notice.hide();
+			new Notice(targetPath ? `Pulled ${targetPath}` : 'Pull Complete!');
+			this.updateStatusBar();
+		} catch (error) {
+			console.error(error);
+			notice.hide();
+			new Notice('Pull Failed.');
 		}
 	}
 
