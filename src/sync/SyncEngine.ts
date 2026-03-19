@@ -143,6 +143,9 @@ export class SyncEngine {
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
             if (targetPath && rPath !== targetPath && !rPath.startsWith(targetPath + '/')) continue;
+            // Skip hidden/dotfiles that Obsidian can't index
+            const fileName = rPath.split('/').pop() || '';
+            if (fileName.startsWith('.')) continue;
 
             remotePaths.add(rPath);
 
@@ -281,8 +284,13 @@ export class SyncEngine {
 
         const pathExists = await this.app.vault.adapter.exists(path);
         if (pathExists) {
-            const tfile = this.app.vault.getAbstractFileByPath(path) as TFile;
-            await this.app.vault.modifyBinary(tfile, data);
+            const tfile = this.app.vault.getAbstractFileByPath(path);
+            if (tfile && tfile instanceof TFile) {
+                await this.app.vault.modifyBinary(tfile, data);
+            } else {
+                // File exists on disk but not in Obsidian's index — write directly
+                await this.app.vault.adapter.writeBinary(path, data);
+            }
         } else {
             await this.app.vault.createBinary(path, data);
         }
