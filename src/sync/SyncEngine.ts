@@ -2,6 +2,7 @@ import { App, TFile, TFolder, FileSystemAdapter } from 'obsidian';
 import { minimatch } from 'minimatch';
 import { Storage, SyncRule, ObsidianGDriveSyncSettings, FileMeta } from '../types';
 import { VersioningEngine } from './VersioningEngine';
+import { getMimeType } from '../utils/mimeTypes';
 
 interface SyncState {
     files: {
@@ -137,9 +138,13 @@ export class SyncEngine {
             remotePathMap.set(rf.id!, rf);
         }
 
+        const remotePaths = new Set<string>();
+
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
             if (targetPath && rPath !== targetPath && !rPath.startsWith(targetPath + '/')) continue;
+
+            remotePaths.add(rPath);
 
             const rule = this.matchesRule(rPath);
             if (!rule) continue;
@@ -165,6 +170,20 @@ export class SyncEngine {
                 }
             }
         }
+
+        // Delete reconciliation: remove local files that were deleted on remote
+        if (!targetPath) {
+            for (const statePath of Object.keys(this.state.files)) {
+                if (!remotePaths.has(statePath)) {
+                    console.log(`Remote deleted: ${statePath}, removing local copy.`);
+                    const localFile = this.app.vault.getAbstractFileByPath(statePath);
+                    if (localFile) {
+                        await this.app.vault.delete(localFile);
+                    }
+                    delete this.state.files[statePath];
+                }
+            }
+        }
         
         this.settings.lastSyncTime = Date.now();
         await this.saveState();
@@ -177,10 +196,13 @@ export class SyncEngine {
         await this.versioning.loadCache();
         
         const localFiles = await this.getLocalFiles();
+        const localPaths = new Set<string>();
         
         for (const lFile of localFiles) {
             const lPath = lFile.path;
             if (targetPath && lPath !== targetPath && !lPath.startsWith(targetPath + '/')) continue;
+
+            localPaths.add(lPath);
 
             const rule = this.matchesRule(lPath);
             if (!rule || rule.direction === 'download-only') continue;
@@ -190,6 +212,21 @@ export class SyncEngine {
 
             if (!stateEntry || stateEntry.md5Checksum !== localHash) {
                 await this.uploadFile(lPath, lFile);
+            }
+        }
+
+        // Delete reconciliation: remove remote files that were deleted locally
+        if (!targetPath) {
+            for (const statePath of Object.keys(this.state.files)) {
+                if (!localPaths.has(statePath)) {
+                    console.log(`Local deleted: ${statePath}, removing from Drive.`);
+                    try {
+                        await this.storage.delete(statePath);
+                    } catch (e) {
+                        console.warn(`Failed to delete remote file ${statePath}:`, e);
+                    }
+                    delete this.state.files[statePath];
+                }
             }
         }
 
@@ -268,7 +305,7 @@ export class SyncEngine {
 
         // Ensure remote parent folders exist: storage.put handles it with resolvePathToId(createIfMissing=true)
 
-        const rMeta = await this.storage.put(path, data, 'text/markdown'); // In reality we'd detect mimetype based on extension
+        const rMeta = await this.storage.put(path, data, getMimeType(path));
 
         this.state.files[path] = {
             md5Checksum: rMeta.md5Checksum || '',
