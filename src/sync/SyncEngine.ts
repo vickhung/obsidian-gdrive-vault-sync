@@ -144,6 +144,8 @@ export class SyncEngine {
             // Skip hidden/dotfiles that Obsidian can't index
             const fileName = rPath.split('/').pop() || '';
             if (fileName.startsWith('.')) continue;
+            // Skip ignored paths
+            if (this.settings.ignoredPaths.some(p => rPath === p || rPath.startsWith(p + '/'))) continue;
 
             const rule = this.matchesRule(rPath);
             if (!rule) continue;
@@ -152,7 +154,11 @@ export class SyncEngine {
             const stateEntry = this.state.files[rPath];
 
             if (!lFile) {
-                await this.downloadFile(rPath, rMeta);
+                // Only auto-download if it was previously tracked (i.e. we synced it before)
+                // New remote-only files are shown in the Selective Sync UI for manual pull
+                if (stateEntry) {
+                    await this.downloadFile(rPath, rMeta);
+                }
             } else if (lFile instanceof TFile) {
                 const localHash = await this.versioning.getHash(lFile);
                 const remoteHash = rMeta.md5Checksum;
