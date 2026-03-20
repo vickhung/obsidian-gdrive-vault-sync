@@ -269,6 +269,18 @@ export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
         treeContainer.style.backgroundColor = 'var(--background-secondary)';
 
         this.renderHybridTree(treeContainer);
+
+        // Auto-fetch remote files if authenticated and not already loaded
+        if (this.remoteFiles.size === 0 && !this.isFetchingRemote && this.plugin.syncEngine) {
+            this.isFetchingRemote = true;
+            this.plugin.syncEngine.fetchRemoteState().then((remote) => {
+                this.remoteFiles = remote;
+                this.isFetchingRemote = false;
+                this.display(); // Re-render with remote files visible
+            }).catch(() => {
+                this.isFetchingRemote = false;
+            });
+        }
     }
 
     private renderHybridTree(container: HTMLElement) {
