@@ -154,11 +154,9 @@ export class SyncEngine {
             const stateEntry = this.state.files[rPath];
 
             if (!lFile) {
-                // Only auto-download if it was previously tracked (i.e. we synced it before)
-                // New remote-only files are shown in the Selective Sync UI for manual pull
-                if (stateEntry) {
-                    await this.downloadFile(rPath, rMeta);
-                }
+                // Download any remote file not in ignoredPaths
+                // This ensures new files from other devices auto-sync
+                await this.downloadFile(rPath, rMeta);
             } else if (lFile instanceof TFile) {
                 const localHash = await this.versioning.getHash(lFile);
                 const remoteHash = rMeta.md5Checksum;
