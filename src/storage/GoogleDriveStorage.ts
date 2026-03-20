@@ -84,25 +84,31 @@ export class GoogleDriveStorage implements Storage {
         return currentParentId;
     }
 
-    public async listAll(): Promise<FileMeta[]> {
-        const q = `trashed=false`;
+    public async list(pathOrId: string): Promise<FileMeta[]> {
+        let folderId: string | null = null;
+        if (pathOrId.includes('/') || pathOrId === '' || pathOrId === '.') {
+            folderId = await this.resolvePathToId(pathOrId);
+        } else {
+            folderId = pathOrId;
+        }
+        
+        if (!folderId) return []; // Folder does not exist
+
+        const q = `'${folderId}' in parents and trashed=false`;
         let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,parents)&pageSize=1000`;
 
         let allFiles: FileMeta[] = [];
         let hasNextPage = true;
 
-        let pageCount = 0;
         while (hasNextPage) {
-            pageCount++;
             const response = await this.fetchWithAuth(url);
             if (!response.ok) {
-                throw new Error(`Failed to list all files`);
+                throw new Error(`Failed to list files in folder: ${pathOrId}`);
             }
 
             const data = await response.json();
 
             if (data.files) {
-                console.log(`Fetched page ${pageCount} of file list (${data.files.length} items)...`);
                 allFiles = allFiles.concat(data.files.map((f: any) => ({
                     id: f.id,
                     name: f.name,
@@ -116,82 +122,6 @@ export class GoogleDriveStorage implements Storage {
 
             if (data.nextPageToken) {
                 url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,parents)&pageSize=1000&pageToken=${data.nextPageToken}`;
-            } else {
-                hasNextPage = false;
-            }
-        }
-
-        return allFiles;
-    }
-
-    public async listFolders(): Promise<FileMeta[]> {
-        const q = `mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000`;
-        
-        let allFolders: FileMeta[] = [];
-        let hasNextPage = true;
-
-        while (hasNextPage) {
-            const response = await this.fetchWithAuth(url);
-            if (!response.ok) throw new Error('Failed to list folders');
-            const data = await response.json();
-            if (data.files) {
-                allFolders = allFolders.concat(data.files.map((f: any) => ({
-                    id: f.id,
-                    name: f.name,
-                    mimeType: f.mimeType,
-                    modifiedTime: 0,
-                    size: 0,
-                    parents: f.parents
-                })));
-            }
-
-            if (data.nextPageToken) {
-                url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,parents)&pageSize=1000&pageToken=${data.nextPageToken}`;
-            } else {
-                hasNextPage = false;
-            }
-        }
-        return allFolders;
-    }
-
-    public async list(pathOrId: string): Promise<FileMeta[]> {
-        let folderId: string | null = null;
-        if (pathOrId.includes('/') || pathOrId === '' || pathOrId === '.') {
-            folderId = await this.resolvePathToId(pathOrId);
-        } else {
-            folderId = pathOrId;
-        }
-        
-        if (!folderId) return []; // Folder does not exist
-
-        const q = `'${folderId}' in parents and trashed=false`;
-        let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)&pageSize=1000`;
-
-        let allFiles: FileMeta[] = [];
-        let hasNextPage = true;
-
-        while (hasNextPage) {
-            const response = await this.fetchWithAuth(url);
-            if (!response.ok) {
-                throw new Error(`Failed to list files in path: ${pathOrId}`);
-            }
-
-            const data = await response.json();
-
-            if (data.files) {
-                allFiles = allFiles.concat(data.files.map((f: any) => ({
-                    id: f.id,
-                    name: f.name,
-                    mimeType: f.mimeType,
-                    modifiedTime: new Date(f.modifiedTime).getTime(),
-                    size: parseInt(f.size || '0', 10),
-                    md5Checksum: f.md5Checksum
-                })));
-            }
-
-            if (data.nextPageToken) {
-                url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum)&pageSize=1000&pageToken=${data.nextPageToken}`;
             } else {
                 hasNextPage = false;
             }
@@ -226,10 +156,6 @@ export class GoogleDriveStorage implements Storage {
         // Check if file already exists
         const fileId = await this.resolvePathToId(path);
 
-        // Multi-part upload strategy is best for Drive REST API but a bit tedious without a library
-        // For simplicity, we use the simple upload for the body, and patch metadata after.
-        // Wait, standard fetch in generic TS supports Blob/ArrayBuffer direct upload:
-
         let uploadUrl = '';
         let uploadMethod = '';
 
@@ -261,8 +187,6 @@ export class GoogleDriveStorage implements Storage {
         let metaUrl = `${this.driveApiBase}/${uploadedFileId}`;
         const metadata: any = { name: fileName };
         if (!fileId && parentId) {
-            // In Google Drive v3, you cannot write 'parents' directly on a PATCH update. 
-            // You must use the 'addParents' query parameter.
             metaUrl += `?addParents=${parentId}`;
         }
 
@@ -277,46 +201,46 @@ export class GoogleDriveStorage implements Storage {
             throw new Error(`Failed to update metadata ${path}: ${metaResponse.status} ${errText}`);
         }
 
-        // We usually need to fetch it one more time to get full metadata like md5Checksum
-        const finalMeta = await this.fetchWithAuth(`${this.driveApiBase}/${uploadedFileId}?fields=id,name,mimeType,modifiedTime,size,md5Checksum`);
-        const finalMetaData = await finalMeta.json();
-
+        const finalMeta = await metaResponse.json();
         return {
-            id: finalMetaData.id,
-            name: finalMetaData.name,
-            mimeType: finalMetaData.mimeType,
-            modifiedTime: new Date(finalMetaData.modifiedTime).getTime(),
-            size: parseInt(finalMetaData.size || '0', 10),
-            md5Checksum: finalMetaData.md5Checksum
+            id: finalMeta.id,
+            name: finalMeta.name,
+            mimeType: finalMeta.mimeType,
+            modifiedTime: new Date(finalMeta.modifiedTime).getTime(),
+            size: parseInt(finalMeta.size || '0', 10),
+            md5Checksum: finalMeta.md5Checksum
         };
     }
 
     public async delete(path: string): Promise<void> {
         const fileId = await this.resolvePathToId(path);
-        if (!fileId) return; // File already gone
+        if (!fileId) return;
 
         const url = `${this.driveApiBase}/${fileId}`;
         const response = await this.fetchWithAuth(url, { method: 'DELETE' });
 
-        if (!response.ok) {
-            throw new Error(`Failed to delete file: ${path}`);
+        if (!response.ok && response.status !== 404) {
+            const errText = await response.text();
+            throw new Error(`Failed to delete file ${path}: ${response.status} ${errText}`);
         }
     }
 
     public async mkdir(path: string): Promise<FileMeta> {
         const folderId = await this.resolvePathToId(path, true);
-        if (!folderId) throw new Error(`Failed to create folder: ${path}`);
-
-        // Just fetch it to return meta
-        const response = await this.fetchWithAuth(`${this.driveApiBase}/${folderId}?fields=id,name,mimeType,modifiedTime,size`);
-        const metadata = await response.json();
-
+        if (!folderId) throw new Error(`Failed to create or find folder: ${path}`);
+        
+        // This is a bit redundant but mkdir is supposed to return the meta
+        const url = `${this.driveApiBase}/${folderId}?fields=id,name,mimeType,modifiedTime,size`;
+        const response = await this.fetchWithAuth(url);
+        if (!response.ok) throw new Error(`Failed to get folder meta for: ${path}`);
+        
+        const data = await response.json();
         return {
-            id: metadata.id,
-            name: metadata.name,
-            mimeType: metadata.mimeType,
-            modifiedTime: new Date(metadata.modifiedTime).getTime(),
-            size: parseInt(metadata.size || '0', 10)
+            id: data.id,
+            name: data.name,
+            mimeType: data.mimeType,
+            modifiedTime: new Date(data.modifiedTime).getTime(),
+            size: 0
         };
     }
 }

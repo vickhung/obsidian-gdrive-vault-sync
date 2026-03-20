@@ -216,72 +216,38 @@ export class SyncEngine {
     }
 
     public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
-        console.log('Fetching remote folder hierarchy...');
+        console.log(`Starting Strict Recursive Crawl of Drive Folder: ${this.settings.driveFolderId}`);
         const startTime = Date.now();
-        const allFolders = await this.storage.listFolders();
-        console.log(`Fetched ${allFolders.length} folders from Drive in ${Date.now() - startTime}ms.`);
+        const remotePathMap = new Map<string, FileMeta>();
 
-        const idMap = new Map<string, FileMeta>();
-        for (const f of allFolders) idMap.set(f.id!, f);
+        const crawl = async (folderId: string, currentPath: string) => {
+            const items = await this.storage.list(folderId);
+            const folderTasks: Promise<void>[] = [];
 
-        const vaultFolders = new Map<string, string>(); // folderId -> fullPath
-        const memoPaths = new Map<string, string | null>(); // id -> fullPath
-
-        const resolveFolder = (id: string): string | null => {
-            if (id === this.settings.driveFolderId) return '';
-            if (memoPaths.has(id)) return memoPaths.get(id)!;
-
-            const meta = idMap.get(id);
-            if (!meta || !meta.parents || meta.parents.length === 0) {
-                memoPaths.set(id, null);
-                return null;
+            for (const item of items) {
+                const itemPath = currentPath === '' ? item.name : `${currentPath}/${item.name}`;
+                if (item.mimeType === 'application/vnd.google-apps.folder') {
+                    // Recurse into subfolders in parallel
+                    folderTasks.push(crawl(item.id!, itemPath));
+                } else {
+                    const metaWithPath = { ...item, name: itemPath, id: itemPath };
+                    remotePathMap.set(itemPath, metaWithPath);
+                }
             }
-            const parentId = meta.parents[0];
-            if (!parentId) {
-                memoPaths.set(id, null);
-                return null;
+            
+            if (folderTasks.length > 0) {
+                await Promise.all(folderTasks);
             }
-            const parentPath = resolveFolder(parentId);
-            if (parentPath === null) {
-                memoPaths.set(id, null);
-                return null;
-            }
-
-            const fullPath = parentPath === '' ? meta.name : `${parentPath}/${meta.name}`;
-            memoPaths.set(id, fullPath);
-            return fullPath;
         };
 
-        // Seed with root
-        vaultFolders.set(this.settings.driveFolderId, '');
-
-        for (const f of allFolders) {
-            const path = resolveFolder(f.id!);
-            if (path !== null) vaultFolders.set(f.id!, path);
+        try {
+            await crawl(this.settings.driveFolderId, '');
+            console.log(`Successfully mapped ${remotePathMap.size} remote files. Total time: ${Date.now() - startTime}ms.`);
+        } catch (error) {
+            console.error(`Error during remote crawl:`, error);
+            throw error;
         }
-
-        console.log(`Found ${vaultFolders.size} folders belonging to the vault. Fetching files...`);
-
-        const remotePathMap = new Map<string, FileMeta>();
-        const folderIds = Array.from(vaultFolders.keys());
         
-        // Batch size for parallel listing to avoid rate limits
-        const BATCH_SIZE = 15;
-        for (let i = 0; i < folderIds.length; i += BATCH_SIZE) {
-            const batch = folderIds.slice(i, i + BATCH_SIZE);
-            await Promise.all(batch.map(async (fId) => {
-                const folderPath = vaultFolders.get(fId)!;
-                const files = await this.storage.list(fId);
-                for (const file of files) {
-                    if (file.mimeType === 'application/vnd.google-apps.folder') continue;
-                    const fullPath = folderPath === '' ? file.name : `${folderPath}/${file.name}`;
-                    const metaWithPath = { ...file, name: fullPath, id: fullPath };
-                    remotePathMap.set(fullPath, metaWithPath);
-                }
-            }));
-        }
-
-        console.log(`Successfully mapped ${remotePathMap.size} remote files. Total time: ${Date.now() - startTime}ms.`);
         return remotePathMap;
     }
 

@@ -53,8 +53,6 @@ export interface FileMeta {
 
 export interface Storage {
     list(path: string): Promise<FileMeta[]>;
-    listAll(): Promise<FileMeta[]>;
-    listFolders(): Promise<FileMeta[]>;
     get(path: string): Promise<ArrayBuffer>;
     put(path: string, data: ArrayBuffer, mimeType?: string): Promise<FileMeta>;
     delete(path: string): Promise<void>;
