@@ -215,6 +215,13 @@ export class SyncEngine {
         await this.versioning.saveCache();
     }
 
+    private sanitizePath(path: string): string {
+        // Obsidian illegal characters in filenames/paths: \ : * ? " < > |
+        // Drive might use : in its names (e.g. S81935: CUDA).
+        // We replace them with a hyphen -
+        return path.replace(/[:\\*?"<>|]/g, '-');
+    }
+
     public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
         console.log(`Starting Strict Recursive Crawl of Drive Folder: ${this.settings.driveFolderId}`);
         const startTime = Date.now();
@@ -225,7 +232,10 @@ export class SyncEngine {
             const folderTasks: Promise<void>[] = [];
 
             for (const item of items) {
-                const itemPath = currentPath === '' ? item.name : `${currentPath}/${item.name}`;
+                // Sanitize filename to avoid Obsidian illegal characters (like :)
+                const safeName = this.sanitizePath(item.name);
+                const itemPath = currentPath === '' ? safeName : `${currentPath}/${safeName}`;
+                
                 if (item.mimeType === 'application/vnd.google-apps.folder') {
                     // Recurse into subfolders in parallel
                     folderTasks.push(crawl(item.id!, itemPath));
