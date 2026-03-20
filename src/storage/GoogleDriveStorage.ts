@@ -84,6 +84,46 @@ export class GoogleDriveStorage implements Storage {
         return currentParentId;
     }
 
+    public async listAll(): Promise<FileMeta[]> {
+        const q = `trashed=false`;
+        let url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,parents)`;
+
+        let allFiles: FileMeta[] = [];
+        let hasNextPage = true;
+
+        let pageCount = 0;
+        while (hasNextPage) {
+            pageCount++;
+            console.log(`Fetching remote file list (page ${pageCount})...`);
+            const response = await this.fetchWithAuth(url);
+            if (!response.ok) {
+                throw new Error(`Failed to list all files`);
+            }
+
+            const data = await response.json();
+
+            if (data.files) {
+                allFiles = allFiles.concat(data.files.map((f: any) => ({
+                    id: f.id,
+                    name: f.name,
+                    mimeType: f.mimeType,
+                    modifiedTime: new Date(f.modifiedTime).getTime(),
+                    size: parseInt(f.size || '0', 10),
+                    md5Checksum: f.md5Checksum,
+                    parents: f.parents
+                })));
+            }
+
+            if (data.nextPageToken) {
+                url = `${this.driveApiBase}?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime,size,md5Checksum,parents)&pageToken=${data.nextPageToken}`;
+            } else {
+                hasNextPage = false;
+            }
+        }
+
+        return allFiles;
+    }
+
     public async list(path: string): Promise<FileMeta[]> {
         const folderId = await this.resolvePathToId(path);
         if (!folderId) return []; // Folder does not exist

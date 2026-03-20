@@ -130,25 +130,30 @@ export class SyncEngine {
         await this.loadState();
         await this.versioning.loadCache();
         
-        const allRemoteFiles: FileMeta[] = [];
-        await this.crawlRemoteWithPath('', '', allRemoteFiles);
+        const remotePathMap = await this.fetchRemoteState();
         
-        const remotePathMap = new Map<string, FileMeta>();
-        for (const rf of allRemoteFiles) {
-            remotePathMap.set(rf.id!, rf);
-        }
-
         for (const [rPath, rMeta] of remotePathMap.entries()) {
             if (rMeta.mimeType === 'application/vnd.google-apps.folder') continue;
             if (targetPath && rPath !== targetPath && !rPath.startsWith(targetPath + '/')) continue;
+            
             // Skip hidden/dotfiles that Obsidian can't index
             const fileName = rPath.split('/').pop() || '';
-            if (fileName.startsWith('.')) continue;
+            if (fileName.startsWith('.')) {
+                console.log(`Skipping hidden file: ${rPath}`);
+                continue;
+            }
+            
             // Skip ignored paths
-            if (this.settings.ignoredPaths.some(p => rPath === p || rPath.startsWith(p + '/'))) continue;
+            if (this.settings.ignoredPaths.some(p => rPath === p || rPath.startsWith(p + '/'))) {
+                console.log(`Skipping ignored path: ${rPath}`);
+                continue;
+            }
 
             const rule = this.matchesRule(rPath);
-            if (!rule) continue;
+            if (!rule) {
+                console.log(`No sync rule matches: ${rPath}`);
+                continue;
+            }
 
             const lFile = this.app.vault.getAbstractFileByPath(rPath);
             const stateEntry = this.state.files[rPath];
@@ -169,7 +174,11 @@ export class SyncEngine {
                         await this.handleConflict(rPath, rMeta, lFile);
                     } else if (remoteChanged) {
                         await this.downloadFile(rPath, rMeta);
+                    } else {
+                        console.log(`In sync (remote not newer): ${rPath}`);
                     }
+                } else {
+                    console.log(`In sync (hash match): ${rPath}`);
                 }
             }
         }
@@ -207,33 +216,62 @@ export class SyncEngine {
     }
 
     public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
-        const allRemoteFiles: FileMeta[] = [];
-        await this.crawlRemoteWithPath('', '', allRemoteFiles);
+        console.log('Fetching all remote files from Google Drive...');
+        const startTime = Date.now();
+        const allFiles = await this.storage.listAll();
+        console.log(`Fetched ${allFiles.length} files from Drive in ${Date.now() - startTime}ms.`);
+
+        const idMap = new Map<string, FileMeta>();
+        for (const f of allFiles) idMap.set(f.id!, f);
 
         const remotePathMap = new Map<string, FileMeta>();
-        for (const rf of allRemoteFiles) {
-            remotePathMap.set(rf.id!, rf);
+        const memoPaths = new Map<string, string | null>(); // id -> fullPath
+
+        console.log('Rebuilding remote file hierarchy...');
+        const getPath = (id: string): string | null => {
+            if (id === this.settings.driveFolderId) return '';
+            if (memoPaths.has(id)) return memoPaths.get(id)!;
+
+            const meta = idMap.get(id);
+            if (!meta || !meta.parents || meta.parents.length === 0) {
+                memoPaths.set(id, null);
+                return null;
+            }
+
+            const parentId = meta.parents[0];
+            if (!parentId) {
+                memoPaths.set(id, null);
+                return null;
+            }
+            const parentPath = getPath(parentId);
+            
+            if (parentPath === null) {
+                memoPaths.set(id, null);
+                return null;
+            }
+
+            const fullPath = parentPath === '' ? meta.name : `${parentPath}/${meta.name}`;
+            memoPaths.set(id, fullPath);
+            return fullPath;
+        };
+
+        for (const file of allFiles) {
+            if (file.id === this.settings.driveFolderId) continue;
+            
+            const fullPath = getPath(file.id!);
+            if (fullPath !== null) {
+                const metaWithPath = { ...file, name: fullPath };
+                // Store full path in id for easier lookup in SyncEngine
+                metaWithPath.id = fullPath;
+                remotePathMap.set(fullPath, metaWithPath);
+            }
         }
+
+        console.log(`Mapped ${remotePathMap.size} files to vault root. Ignoring ${allFiles.length - remotePathMap.size} files outside vault.`);
         return remotePathMap;
     }
 
-    private async crawlRemoteWithPath(currentPath: string, basePath: string, output: FileMeta[]) {
-        const files = await this.storage.list(currentPath);
-        for (const file of files) {
-            const fullPath = basePath ? `${basePath}/${file.name}` : file.name;
-            const metaWithPath = { ...file, name: fullPath }; // Override name with full path for the map
-            // Hack: store full path in id for the map above to work
-            metaWithPath.id = fullPath;
-            output.push(metaWithPath);
-
-            if (file.mimeType === 'application/vnd.google-apps.folder') {
-                await this.crawlRemoteWithPath(fullPath, fullPath, output);
-            }
-        }
-    }
-
-
-
+    // Optimized helper to download file with defensive index checks
     private async downloadFile(path: string, remoteMeta: FileMeta) {
         console.log(`Downloading ${path}...`);
         const data = await this.storage.get(path);

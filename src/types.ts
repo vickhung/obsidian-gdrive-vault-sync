@@ -48,10 +48,12 @@ export interface FileMeta {
     size: number;
     md5Checksum?: string;
     trashed?: boolean;
+    parents?: string[];
 }
 
 export interface Storage {
     list(path: string): Promise<FileMeta[]>;
+    listAll(): Promise<FileMeta[]>;
     get(path: string): Promise<ArrayBuffer>;
     put(path: string, data: ArrayBuffer, mimeType?: string): Promise<FileMeta>;
     delete(path: string): Promise<void>;
