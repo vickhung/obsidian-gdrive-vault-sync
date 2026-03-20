@@ -216,19 +216,18 @@ export class SyncEngine {
     }
 
     public async fetchRemoteState(): Promise<Map<string, FileMeta>> {
-        console.log('Fetching all remote files from Google Drive...');
+        console.log('Fetching remote folder hierarchy...');
         const startTime = Date.now();
-        const allFiles = await this.storage.listAll();
-        console.log(`Fetched ${allFiles.length} files from Drive in ${Date.now() - startTime}ms.`);
+        const allFolders = await this.storage.listFolders();
+        console.log(`Fetched ${allFolders.length} folders from Drive in ${Date.now() - startTime}ms.`);
 
         const idMap = new Map<string, FileMeta>();
-        for (const f of allFiles) idMap.set(f.id!, f);
+        for (const f of allFolders) idMap.set(f.id!, f);
 
-        const remotePathMap = new Map<string, FileMeta>();
+        const vaultFolders = new Map<string, string>(); // folderId -> fullPath
         const memoPaths = new Map<string, string | null>(); // id -> fullPath
 
-        console.log('Rebuilding remote file hierarchy...');
-        const getPath = (id: string): string | null => {
+        const resolveFolder = (id: string): string | null => {
             if (id === this.settings.driveFolderId) return '';
             if (memoPaths.has(id)) return memoPaths.get(id)!;
 
@@ -237,14 +236,12 @@ export class SyncEngine {
                 memoPaths.set(id, null);
                 return null;
             }
-
             const parentId = meta.parents[0];
             if (!parentId) {
                 memoPaths.set(id, null);
                 return null;
             }
-            const parentPath = getPath(parentId);
-            
+            const parentPath = resolveFolder(parentId);
             if (parentPath === null) {
                 memoPaths.set(id, null);
                 return null;
@@ -255,19 +252,36 @@ export class SyncEngine {
             return fullPath;
         };
 
-        for (const file of allFiles) {
-            if (file.id === this.settings.driveFolderId) continue;
-            
-            const fullPath = getPath(file.id!);
-            if (fullPath !== null) {
-                const metaWithPath = { ...file, name: fullPath };
-                // Store full path in id for easier lookup in SyncEngine
-                metaWithPath.id = fullPath;
-                remotePathMap.set(fullPath, metaWithPath);
-            }
+        // Seed with root
+        vaultFolders.set(this.settings.driveFolderId, '');
+
+        for (const f of allFolders) {
+            const path = resolveFolder(f.id!);
+            if (path !== null) vaultFolders.set(f.id!, path);
         }
 
-        console.log(`Mapped ${remotePathMap.size} files to vault root. Ignoring ${allFiles.length - remotePathMap.size} files outside vault.`);
+        console.log(`Found ${vaultFolders.size} folders belonging to the vault. Fetching files...`);
+
+        const remotePathMap = new Map<string, FileMeta>();
+        const folderIds = Array.from(vaultFolders.keys());
+        
+        // Batch size for parallel listing to avoid rate limits
+        const BATCH_SIZE = 15;
+        for (let i = 0; i < folderIds.length; i += BATCH_SIZE) {
+            const batch = folderIds.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async (fId) => {
+                const folderPath = vaultFolders.get(fId)!;
+                const files = await this.storage.list(fId);
+                for (const file of files) {
+                    if (file.mimeType === 'application/vnd.google-apps.folder') continue;
+                    const fullPath = folderPath === '' ? file.name : `${folderPath}/${file.name}`;
+                    const metaWithPath = { ...file, name: fullPath, id: fullPath };
+                    remotePathMap.set(fullPath, metaWithPath);
+                }
+            }));
+        }
+
+        console.log(`Successfully mapped ${remotePathMap.size} remote files. Total time: ${Date.now() - startTime}ms.`);
         return remotePathMap;
     }
 
