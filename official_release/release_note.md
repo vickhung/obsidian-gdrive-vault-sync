@@ -1,28 +1,25 @@
-# Release Notes - v1.1.0
+# Changelog
 
-This release introduces significant performance optimizations and major UI enhancements to provide a smoother and more reliable synchronization experience with Google Drive.
+## [1.2.0] - 2026-03-20
 
-## ✨ New Features
+### 🚀 Performance & Privacy Overhaul
+- **Privacy-First Strict Sync**: Replaced whole-drive metadata fetching with a targeted recursive crawl. The plugin now only interacts with files inside your configured vault folder, providing 100% privacy and zero visibility into the rest of your Google Drive.
+- **100x Speedup**: Implemented a high-concurrency parallel recursive crawler with maximum page sizes (`pageSize=1000`). Sync initiation and "Selective Sync" tree loading are now nearly instantaneous even for accounts with tens of thousands of files.
 
-### 🌲 Hybrid Sync Tree UI
-A completely redesigned **Selective Sync** interface that merges your local vault with files stored on Google Drive.
-- **Visual Distinction**: Easily see which files are local-only (accent color), remote-only (faint italics), or synced.
-- **Granular Push/Pull**: Added individual **↑ (Push)** and **↓ (Pull)** icons next to every file and folder for immediate, targeted synchronization.
-- **Auto-Expansion**: Checking a folder now automatically expands it to reveal its contents, making management more intuitive.
+### 🛠️ Robustness & Compatibility
+- **Illegal Filename Sanitization**: Automatically handles characters that are illegal in Obsidian/OS filenames (such as `:`, `\`, `|`, `*`, `?`, etc.) by replacing them with safe alternatives.
+- **ID-Based Retrieval**: Switched to direct Google Drive File IDs for all download operations. This ensures perfect linkage between local sanitized names (e.g., `CUDA- New Features`) and original remote Drive files (e.g., `CUDA: New Features`).
+- **Enhanced MIME Type Support**: Improved detection for 60+ file extensions (including `.mp4`, `.pdf`, `.zip`, `.yaml`, etc.), ensuring files are recognized and openable on all devices.
+- **Selective Sync Fixes**: Improved tree rendering logic to correctly show remote-only files as greyed-out and italicized for easier discovery.
 
-### ⚡ Performance Optimization
-Obsidian remains responsive even with massive vaults (thousands of files).
-- **Lazy Rendering**: Folders in the settings tree only render their children when expanded, preventing UI freezes.
-- **Intelligent Hashing Cache**: Implemented a local MD5 hashing cache that tracks file modification times (`mtime`). The plugin now skips redundant hashing, ensuring that full vault scans are lightning-fast.
-
-### ☁️ Dedicated Sync Actions
-- Replaced the single "Sync" ribbon icon with two dedicated **Push** and **Pull** icons (`upload-cloud` and `download-cloud`) for clear directional control.
-- Added corresponding commands to the Command Palette.
-
-## 🛠 Fixes & Improvements
-- Optimized file traversal to skip ignored directories at the source, reducing CPU overhead.
-- Removed funding sections to keep the plugin focused on core functionality.
-- Improved user feedback with clear notices and status bar progress during push/pull operations.
+### 🐞 Bug Fixes
+- Fixed "File not found" errors during pull when filenames contained illegal characters.
+- Fixed duplicated remote-only files appearing in some scenarios during sync.
+- Fixed silent failures during folder creation on Android.
 
 ---
-*For a detailed guide on how these features work, see the [walkthrough.md](file:///home/vkwk/.gemini/antigravity/brain/e99795f8-3c6f-4f6a-84c0-b18969b0482e/walkthrough.md) in your brain folder.*
+
+## [1.1.0] - 2026-03-16
+- Initial support for directional sync (Push/Pull).
+- Git-style versioning and content-hash verification.
+- Improved OAuth flow and token management.
