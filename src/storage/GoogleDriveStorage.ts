@@ -130,15 +130,21 @@ export class GoogleDriveStorage implements Storage {
         return allFiles;
     }
 
-    public async get(path: string): Promise<ArrayBuffer> {
-        const fileId = await this.resolvePathToId(path);
-        if (!fileId) throw new Error(`File not found: ${path}`);
+    public async get(pathOrId: string): Promise<ArrayBuffer> {
+        let fileId: string | null = null;
+        if (pathOrId.includes('/') || pathOrId === '' || pathOrId === '.') {
+            fileId = await this.resolvePathToId(pathOrId);
+        } else {
+            fileId = pathOrId;
+        }
+
+        if (!fileId) throw new Error(`File not found: ${pathOrId}`);
 
         const url = `${this.driveApiBase}/${fileId}?alt=media`;
         const response = await this.fetchWithAuth(url);
 
         if (!response.ok) {
-            throw new Error(`Failed to download file: ${path}`);
+            throw new Error(`Failed to download file/ID: ${pathOrId}`);
         }
 
         return response.arrayBuffer();

@@ -240,7 +240,7 @@ export class SyncEngine {
                     // Recurse into subfolders in parallel
                     folderTasks.push(crawl(item.id!, itemPath));
                 } else {
-                    const metaWithPath = { ...item, name: itemPath, id: itemPath };
+                    const metaWithPath = { ...item, name: itemPath };
                     remotePathMap.set(itemPath, metaWithPath);
                 }
             }
@@ -264,7 +264,7 @@ export class SyncEngine {
     // Optimized helper to download file with defensive index checks
     private async downloadFile(path: string, remoteMeta: FileMeta) {
         console.log(`Downloading ${path}...`);
-        const data = await this.storage.get(path);
+        const data = await this.storage.get(remoteMeta.id || path);
 
         // Ensure parent directories exist
         const parts = path.split('/');
