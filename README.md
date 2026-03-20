@@ -4,13 +4,12 @@ A high-performance, granular synchronization plugin for Obsidian that connects y
 
 ## ✨ Key Features
 
+- **🚀 100x Performance Boost**: High-speed parallel recursive crawl with minimal API overhead. Sync initiation is now nearly instantaneous.
 - **🌲 Hybrid Sync Tree**: A unified view of local and remote files. See exactly what's on your Drive versus what's in your vault.
-- **🚀 Performance Optimized**: 
-  - **Lazy Rendering**: Handles massive vaults (10,000+ files) without freezing the UI.
-  - **Fast MD5 Caching**: Intelligent hashing cache avoids redundant file reads, making sync scans lightning-fast.
+- **🛡️ Privacy-First (Strict Sync)**: Targeted syncing that only interacts with your vault folder—never your entire Google Drive.
 - **↕️ Granular Push & Pull**: Don't want to sync everything? Use individual ↑ (Push) and ↓ (Pull) icons for specific files or folders.
-- **🛡️ Agent Support**: Built-in support for Service Account JSON, allowing automated agents to interact with your vault securely.
 - **✅ Selective Sync**: Easily exclude folders or files from automatic sync via a simple checkbox interface.
+- **📛 Filename Sanitization**: Automatic handling of illegal characters like colons (:) to ensure cross-platform compatibility.
 
 ## 🚀 Quick Start
 
@@ -30,7 +29,7 @@ A high-performance, granular synchronization plugin for Obsidian that connects y
 
 ## 📄 Documentation
 
-- [Release Notes](RELEASE_NOTES.md)
+- [Changelog](CHANGELOG.md)
 - [Setup Guide](SETUP.md)
 
 ## 🏗 Development
