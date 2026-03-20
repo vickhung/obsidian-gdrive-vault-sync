@@ -88,7 +88,7 @@ export class ObsidianGDriveSyncSettingTab extends PluginSettingTab {
                     client_id: this.plugin.settings.clientId,
                     redirect_uri: 'http://localhost',
                     response_type: 'code',
-                    scope: 'https://www.googleapis.com/auth/drive.file',
+                    scope: 'https://www.googleapis.com/auth/drive',
                     access_type: 'offline',
                     prompt: 'consent' // Force refresh token generation
                 });
